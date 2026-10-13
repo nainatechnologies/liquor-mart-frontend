@@ -1,0 +1,839 @@
+/* eslint-disable react-refresh/only-export-components */
+import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
+import { ShoppingCart, Eye, Search, Filter, List, CheckCircle, Truck, PackageCheck, X, Package, Pill, FileText, Download, Image as ImageIcon } from 'lucide-react';
+import Swal from 'sweetalert2';
+import { api } from '../api';
+import '../styles/pages/Orders.css';
+import Modal from '../components/common/Modal';
+import Badge from '../components/common/Badge';
+
+const Orders = () => {
+  const location = useLocation();
+  const [searchTerm, setSearchTerm] = useState('');
+  const [activeTab, setActiveTab] = useState(location.state?.activeTab || 'Received');
+  const [orderTypeTab, setOrderTypeTab] = useState('Medicine');
+  const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
+  const [ordersList, setOrdersList] = useState<any[]>([]);
+  const [, setLoading] = useState(true);
+  const [, setError] = useState<string | null>(null);
+  const [isApproving, setIsApproving] = useState(false);
+
+  useEffect(() => {
+    fetchOrders();
+  }, []);
+
+  const fetchOrders = async () => {
+    try {
+      setLoading(true);
+      const res = await api.get<any>('/orders');
+      const data = res.data || res;
+      setOrdersList(Array.isArray(data) ? data : (data.data || []));
+      setError(null);
+    } catch (err: any) {
+      console.error('Error fetching orders:', err);
+      setError(err.message || 'Failed to fetch orders');
+    } finally {
+      setLoading(false);
+    }
+  };
+  const [dateFilter, setDateFilter] = useState('All Time');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
+  const [prescriptionItems, setPrescriptionItems] = useState<any[]>([]);
+  const [formItemId, setFormItemId] = useState('');
+  const [formName, setFormName] = useState('');
+  const [formPrice, setFormPrice] = useState('');
+  const [formQty, setFormQty] = useState('');
+  const [formCategory, setFormCategory] = useState('');
+  const [formPackageSize, setFormPackageSize] = useState('');
+  const [formPotency, setFormPotency] = useState('');
+
+  useEffect(() => {
+    if (!selectedOrder) {
+      setPrescriptionItems([]);
+      setFormItemId('');
+      setFormName('');
+      setFormPrice('');
+      setFormQty('');
+      setFormCategory('');
+      setFormPackageSize('');
+      setFormPotency('');
+    }
+  }, [selectedOrder]);
+
+  const handleAddPrescriptionItem = () => {
+    if (!formItemId || !formName || !formPrice || !formQty || !formCategory || !formPackageSize) {
+      Swal.fire('Error', 'Please fill all fields', 'error');
+      return;
+    }
+    const priceNum = parseFloat(formPrice);
+    const qtyNum = parseInt(formQty, 10);
+    if (isNaN(priceNum) || isNaN(qtyNum)) {
+      Swal.fire('Error', 'Price and Quantity must be valid numbers', 'error');
+      return;
+    }
+
+    setPrescriptionItems([...prescriptionItems, {
+      id: formItemId,
+      name: formName,
+      price: priceNum,
+      qty: qtyNum,
+      category: formCategory,
+      packageSize: formPackageSize,
+      potency: formPotency || 'N/A'
+    }]);
+
+    setFormItemId('');
+    setFormName('');
+    setFormPrice('');
+    setFormQty('');
+    setFormCategory('');
+    setFormPackageSize('');
+    setFormPotency('');
+  };
+
+  const handleRemoveItem = (index: number) => {
+    setPrescriptionItems(prescriptionItems.filter((_, i) => i !== index));
+  };
+
+  const handleApprovePrescription = async () => {
+    if (prescriptionItems.length === 0 || isApproving) return;
+    setIsApproving(true);
+
+    try {
+      // Map prescription items to the backend payload structure
+      const itemsPayload = prescriptionItems.map(item => ({
+        product_id: item.id,
+        quantity: item.qty
+      }));
+
+      // Call the backend approve prescription API
+      await api.put(`/prescriptions/admin/${selectedOrder.id}/approve`, {
+        items: itemsPayload,
+      });
+
+      // The backend creates the order and updates prescription status.
+      // We will refetch orders to update the list.
+      await fetchOrders();
+
+      const totalPrice = prescriptionItems.reduce((sum, item) => sum + (item.price * item.qty), 0);
+      Swal.fire({
+        title: 'Success!',
+        text: `Prescription approved. Order generated for ₹${totalPrice}.`,
+        icon: 'success',
+        confirmButtonColor: '#10b981'
+      });
+
+      setSelectedOrder(null);
+      setSearchTerm('');
+      setOrderTypeTab('Medicine');
+    } catch (err: any) {
+      console.error('Error approving prescription:', err);
+      Swal.fire({
+        title: 'Error!',
+        text: err.message || 'Failed to approve prescription. Ensure you entered valid Product IDs.',
+        icon: 'error',
+        confirmButtonColor: '#ef4444'
+      });
+    } finally {
+      setIsApproving(false);
+    }
+  };
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, activeTab, orderTypeTab, dateFilter, customStartDate, customEndDate]);
+
+  // Map frontend tab status -> backend DB status
+  const toBackendStatus: Record<string, string> = {
+    'Received': 'pending',
+    'Accepted': 'accepted',
+    'Out for Delivery': 'out_for_delivery',
+    'Completed': 'completed',
+    'Cancelled': 'cancelled',
+  };
+
+  const handleStatusChange = async (orderId: string | number, newStatus: string) => {
+    let actionText = '';
+    let confirmBtnColor = '';
+
+    if (newStatus === 'Accepted') {
+      actionText = 'accept';
+      confirmBtnColor = '#10b981';
+    } else if (newStatus === 'Out for Delivery') {
+      actionText = 'mark as out for delivery';
+      confirmBtnColor = '#0ea5e9';
+    } else if (newStatus === 'Completed') {
+      actionText = 'mark as completed';
+      confirmBtnColor = '#22c55e';
+    }
+
+    const result = await Swal.fire({
+      title: 'Confirm Action',
+      text: `Are you sure you want to ${actionText} this order?`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: confirmBtnColor,
+      cancelButtonColor: '#94a3b8',
+      confirmButtonText: `Yes, ${actionText}!`
+    });
+
+    if (result.isConfirmed) {
+      try {
+        const backendStatus = toBackendStatus[newStatus] || newStatus.toLowerCase();
+        await api.put(`/orders/${orderId}/status`, { status: backendStatus });
+        setOrdersList(prevOrders =>
+          prevOrders.map(order =>
+            order.id === orderId ? { ...order, status: newStatus } : order
+          )
+        );
+        Swal.fire({ title: 'Success!', text: 'The order status has been updated.', icon: 'success', confirmButtonColor: '#10b981' });
+      } catch (err: any) {
+        Swal.fire('Error', err?.response?.data?.message || 'Failed to update order status', 'error');
+      }
+    }
+  };
+  const handleReject = (orderId: string) => {
+    Swal.fire({
+      title: 'Reject Order?',
+      text: "Are you sure you want to reject and remove this order?",
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#ef4444',
+      cancelButtonColor: '#94a3b8',
+      confirmButtonText: 'Yes, reject it!'
+    }).then((result) => {
+      if (result.isConfirmed) {
+        setOrdersList(prevOrders => prevOrders.filter(order => order.id !== orderId));
+        Swal.fire({
+          title: 'Rejected!',
+          text: 'The order has been rejected and removed.',
+          icon: 'success',
+          confirmButtonColor: '#10b981'
+        });
+      }
+    });
+  };
+
+  const tabs = [
+    { id: 'Received', label: 'New Orders', icon: List },
+    { id: 'Accepted', label: 'Accepted', icon: CheckCircle },
+    { id: 'Out for Delivery', label: 'Out for Delivery', icon: Truck },
+    { id: 'Completed', label: 'Completed', icon: PackageCheck }
+  ];
+
+  const filteredOrders = ordersList.filter(order => {
+    const searchLower = searchTerm.toLowerCase();
+
+    // 1. Search all table fields
+    const matchesSearch =
+      String(order.id || '').toLowerCase().includes(searchLower) ||
+      ((order.customer?.name || order.user_name || order.patient_name || order.patientName) || 'Customer').toLowerCase().includes(searchLower) ||
+      (order.customer?.phone || order.user_phone || '-').toLowerCase().includes(searchLower) ||
+      String(order.customer?.address || order.address || '').toLowerCase().includes(searchLower) ||
+      (order.product?.name || order.items?.[0]?.name || 'Unknown Item').toLowerCase().includes(searchLower) ||
+      (order.product?.shortDesc || order.items?.[0]?.shortDesc || '-').toLowerCase().includes(searchLower) ||
+      (order.product?.category || order.items?.[0]?.category || '-').toLowerCase().includes(searchLower) ||
+      String(order.product?.price || order.items?.[0]?.price || order.total_amount || 0).toLowerCase().includes(searchLower) ||
+      (order.product?.packageSize || order.items?.[0]?.packageSize || '-').toLowerCase().includes(searchLower) ||
+      String((order.product?.qty || order.items?.[0]?.qty || 1)).includes(searchLower) ||
+      String(order.date || order.created_at || '').toLowerCase().includes(searchLower) ||
+      String(order.status || '').toLowerCase().includes(searchLower);
+
+    // 2. Tab filters - backend now sends frontend-friendly status values
+    const matchesTab = order.status === activeTab;
+    const matchesType = activeTab === 'Received' ? order.type === orderTypeTab : true;
+
+    // 3. Date Filter - use ISO date (created_at_iso) for reliable parsing
+    let matchesDate = true;
+    const rawDateStr = (order as any).created_at_iso || order.created_at || null;
+    const orderDateObj = rawDateStr ? new Date(rawDateStr) : null;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    if (orderDateObj && !isNaN(orderDateObj.getTime())) {
+      const orderDay = new Date(orderDateObj);
+      orderDay.setHours(0, 0, 0, 0);
+      const diffTime = today.getTime() - orderDay.getTime();
+      const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+
+      if (dateFilter === 'Today') {
+        matchesDate = diffDays === 0;
+      } else if (dateFilter === 'Last 3 Days') {
+        matchesDate = diffDays >= 0 && diffDays <= 2;
+      } else if (dateFilter === 'Last 1 Week') {
+        matchesDate = diffDays >= 0 && diffDays <= 6;
+      } else if (dateFilter === 'Last 1 Month') {
+        matchesDate = diffDays >= 0 && diffDays <= 30;
+      } else if (dateFilter === 'Custom Date' && customStartDate && customEndDate) {
+        const start = new Date(customStartDate);
+        const end = new Date(customEndDate);
+        start.setHours(0, 0, 0, 0);
+        end.setHours(23, 59, 59, 999);
+        matchesDate = orderDay.getTime() >= start.getTime() && orderDay.getTime() <= end.getTime();
+      }
+    }
+
+    return matchesSearch && matchesTab && matchesType && matchesDate;
+  });
+
+  const totalPages = Math.ceil(filteredOrders.length / itemsPerPage);
+  const paginatedOrders = filteredOrders.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+  return (
+    <div className="page-container">
+      <div className="page-header flex-between">
+        <div>
+          <h1 className="orders-page-title">Orders Management</h1>
+          <p className="text-muted page-subtitle">View and manage customer orders.</p>
+        </div>
+
+        <div className="flex-center flex-wrap">
+          <div className="search-input-container">
+            <Search size={18} className="search-input-icon" />
+            <input
+              type="text"
+              placeholder="Search all fields..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="search-input"
+            />
+          </div>
+
+          <div className="filter-dropdown-container">
+            <Filter size={18} color="var(--text-muted)" />
+            <select
+              value={dateFilter}
+              onChange={(e) => setDateFilter(e.target.value)}
+              className="filter-select"
+            >
+              <option value="All Time">All Time</option>
+              <option value="Today">Today</option>
+              <option value="Last 3 Days">Last 3 Days</option>
+              <option value="Last 1 Week">Last 1 Week</option>
+              <option value="Last 1 Month">Last 1 Month</option>
+              <option value="Custom Date">Custom Date</option>
+            </select>
+
+            {dateFilter === 'Custom Date' && (
+              <div className="date-range-container">
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                  className="date-input"
+                />
+                <span className="text-muted">to</span>
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  className="date-input"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="orders-tabs-container">
+        {tabs.map(tab => {
+          const Icon = tab.icon;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`tab-btn ${activeTab === tab.id ? 'active' : ''}`}
+            >
+              <Icon size={18} />
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {activeTab === 'Received' && (
+        <div className="sub-tabs-container">
+          <button
+            className={`sub-tab-btn ${orderTypeTab === 'Medicine' ? 'active' : ''}`}
+            onClick={() => setOrderTypeTab('Medicine')}
+          >
+            <Pill size={18} /> Medicine Orders
+          </button>
+          <button
+            className={`sub-tab-btn ${orderTypeTab === 'Prescription' ? 'active' : ''}`}
+            onClick={() => setOrderTypeTab('Prescription')}
+          >
+            <FileText size={18} /> Prescription Orders
+          </button>
+        </div>
+      )}
+
+      <div className="card table-card max-w-1135">
+        <div className="table-responsive">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Order ID</th>
+                <th>Customer</th>
+                <th>
+                  {activeTab === 'Received' && orderTypeTab === 'Prescription' ? 'Prescription' : 'Product Info'}
+                </th>
+                {!(activeTab === 'Received' && orderTypeTab === 'Prescription') && (
+                  <>
+                    <th>Category</th>
+                    <th>Price</th>
+                    <th>Qty</th>
+                    <th>Pkg Size</th>
+                  </>
+                )}
+                {activeTab === 'Received' && orderTypeTab === 'Prescription' && (
+                  <th>Doctor Name</th>
+                )}
+                <th className="text-center">Status</th>
+                <th className="text-center">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedOrders.length > 0 ? (
+                paginatedOrders.map((order, index) => {
+                  return (
+                    <tr key={index}>
+                      <td>
+                        <div className="info-col">
+                          <span className="fw-600 text-primary text-sm text-nowrap">{order.id}</span>
+                          <span className="text-muted text-xs text-nowrap">{order.date}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="info-col">
+                          <span className="fw-600 text-primary-dark text-sm text-nowrap">{((order.customer?.name || order.user_name || order.patient_name || order.patientName) || 'Customer')}</span>
+                          <span className="text-muted text-xs text-nowrap">{(order.customer?.phone || order.user_phone || '-')}</span>
+                        </div>
+                      </td>
+                      <td className="td-truncate pr-1">
+                        {activeTab === 'Received' && orderTypeTab === 'Prescription' ? (
+                          <div
+                            className="flex-center prescription-link"
+                            onClick={() => setPreviewImage(order.imageUrl ? `http://localhost:5000${order.imageUrl}` : 'https://images.unsplash.com/photo-1585435557343-3b092031a831?w=800&q=80')}
+                            title="Click to view full prescription"
+                          >
+                            <ImageIcon size={18} />
+                            <span>{((order.customer?.name || order.user_name || order.patient_name || order.patientName) || 'Customer').split(' ')[0]}_Prescription.jpg</span>
+                          </div>
+                        ) : (
+                          <div className="info-col">
+                            <span className="fw-600 text-sm">{(order.product?.name || order.items?.[0]?.name || 'Unknown Item')}</span>
+                            <span className="text-sm-muted td-truncate">{(order.product?.shortDesc || order.items?.[0]?.shortDesc || '-')}</span>
+                          </div>
+                        )}
+                      </td>
+                      {!(activeTab === 'Received' && orderTypeTab === 'Prescription') && (
+                        <>
+                          <td className="text-sm-muted">
+                            {(order.product?.category || order.items?.[0]?.category || '-')}
+                          </td>
+                          <td>
+                            <span className="fw-600 text-sm">{(order.product?.price || order.items?.[0]?.price || order.total_amount || 0)}</span>
+                          </td>
+                          <td className="fw-600 text-sm">
+                            {(order.product?.qty || order.items?.[0]?.qty || 1)}
+                          </td>
+                          <td className="text-sm-muted">{(order.product?.packageSize || order.items?.[0]?.packageSize || '-')}</td>
+                        </>
+                      )}
+                      {activeTab === 'Received' && orderTypeTab === 'Prescription' && (
+                        <td className="fw-600 text-primary-dark">
+                          {(order as any).doctorName || 'Dr. Sharma'}
+                        </td>
+                      )}
+                      <td className="text-center">
+                        <Badge variant={order.status === 'Completed' ? 'success-solid' : order.status === 'Cancelled' ? 'error-solid' : order.status === 'Accepted' ? 'info-solid' : order.status === 'Out for Delivery' ? 'warning-solid' : order.status === 'Received' ? 'primary-solid' : 'default'}>
+                          {order.status}
+                        </Badge>
+                      </td>
+                      <td className="text-center">
+                        <div className="action-buttons center">
+                          <button
+                            className="btn btn-outline btn-sm btn-icon-text"
+                            onClick={() => setSelectedOrder(order)}
+                            title="View Details"
+                          >
+                            View
+                          </button>
+
+                          {order.status === 'Received' && order.type !== 'Prescription' && (
+                            <button
+                              onClick={() => handleStatusChange(order.id, 'Accepted')}
+                              className="btn btn-sm btn-icon-text btn-status-accepted"
+                            >
+                              Accept
+                            </button>
+                          )}
+                          {order.status === 'Received' && (
+                            <button
+                              onClick={() => handleReject(order.id)}
+                              className="btn btn-sm btn-icon-text btn-danger-solid"
+                            >
+                              Reject
+                            </button>
+                          )}
+
+                          {order.status === 'Accepted' && (
+                            <button
+                              onClick={() => handleStatusChange(order.id, 'Out for Delivery')}
+                              className="btn btn-sm btn-icon-text btn-status-delivery"
+                            >
+                              Out For Delivery
+                            </button>
+                          )}
+
+                          {order.status === 'Out for Delivery' && (
+                            <button
+                              onClick={() => handleStatusChange(order.id, 'Completed')}
+                              className="btn btn-sm btn-icon-text btn-status-completed"
+                            >
+                              Complete
+                            </button>
+                          )}
+
+
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
+                <tr>
+                  <td colSpan={10} className="empty-state">
+                    <ShoppingCart size={48} className="empty-icon" />
+                    <p className="fw-500 empty-state-title">No orders found</p>
+                    <p className="text-sm-muted empty-state-desc">Try adjusting your search or filters.</p>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Pagination Controls */}
+      <div className="flex-between pagination-wrapper">
+        <p className="text-sm-muted">
+          Showing {filteredOrders.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, filteredOrders.length)} of {filteredOrders.length} entries
+        </p>
+        <div className="flex-center">
+          <button
+            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+            disabled={currentPage === 1}
+            className={`btn btn-outline btn-sm ${currentPage === 1 ? 'disabled' : ''}`}
+          >
+            Previous
+          </button>
+          <div className="flex-center pagination-pages">
+            {Array.from({ length: Math.max(1, totalPages) }, (_, i) => i + 1).map(page => (
+              <button
+                key={page}
+                onClick={() => setCurrentPage(page)}
+                className={`btn btn-sm ${currentPage === page ? 'btn-primary' : 'btn-outline'}`}
+              >
+                {page}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => setCurrentPage(p => Math.min(Math.max(1, totalPages), p + 1))}
+            disabled={currentPage === Math.max(1, totalPages)}
+            className={`btn btn-outline btn-sm ${currentPage === Math.max(1, totalPages) ? 'disabled' : ''}`}
+          >
+            Next
+          </button>
+        </div>
+      </div>
+
+      {/* Redesigned Order Details Modal */}
+      <Modal
+        isOpen={!!selectedOrder}
+        onClose={() => setSelectedOrder(null)}
+        title=""
+        footer={
+          <button
+            onClick={() => setSelectedOrder(null)}
+            className="btn btn-primary"
+          >
+            Close Details
+          </button>
+        }
+      >
+        {selectedOrder && (
+          <div className="modal-content-wrapper">
+            <div className="flex-between modal-header-border">
+              <div className="flex-center">
+                <div className="modal-status-badge">
+                  <Package size={24} />
+                </div>
+                <div>
+                  <h2 className="fw-600 text-primary modal-title-main">
+                    Order {selectedOrder.id}
+                  </h2>
+                  <p className="text-main fw-500 modal-title-sub">
+                    <span className="text-muted">Ordered Date: </span>
+                    {selectedOrder.date}
+                  </p>
+                </div>
+              </div>
+              <div className="flex-center">
+                <Badge variant={selectedOrder.status === 'Completed' ? 'success' : selectedOrder.status === 'Cancelled' ? 'error' : selectedOrder.status === 'Accepted' ? 'info' : selectedOrder.status === 'Out for Delivery' ? 'warning' : 'default'}>
+                  {selectedOrder.status}
+                </Badge>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-primary fw-600 modal-section-title">Customer Information</h3>
+              <div className="grid-2">
+                <div><p className="text-sm-muted">Customer Name</p><p className="fw-600">{selectedOrder.customer.name}</p></div>
+                <div><p className="text-sm-muted">Phone Number</p><p className="fw-600">{selectedOrder.customer.phone}</p></div>
+                <div className="grid-col-span-all"><p className="text-sm-muted">Address</p><p className="fw-600">{selectedOrder.customer.address}</p></div>
+              </div>
+            </div>
+
+            {selectedOrder.type !== 'Prescription' && (
+              <div>
+                <h3 className="text-primary fw-600 modal-section-title">Order & Payment</h3>
+                <div className="grid-2">
+                  <div><p className="text-sm-muted">Ordered Date</p><p className="fw-600">{selectedOrder.date}</p></div>
+                  <div><p className="text-sm-muted">Price</p><p className="fw-600">{selectedOrder.product?.price}</p></div>
+                  <div><p className="text-sm-muted">Quantity</p><p className="fw-600">{selectedOrder.product?.qty}</p></div>
+                  <div><p className="text-sm-muted">Payment Details</p><p className="fw-600">{selectedOrder.payment?.method} ({selectedOrder.payment?.status})</p></div>
+                </div>
+              </div>
+            )}
+
+            {selectedOrder.type !== 'Prescription' ? (
+              <>
+                <div>
+                  <h3 className="text-primary fw-600 modal-section-title">Product Details</h3>
+                  <div className="grid-2">
+                    <div><p className="text-sm-muted">Product Name</p><p className="fw-600">{selectedOrder.product?.name}</p></div>
+                    {selectedOrder.product?.category !== 'Custom Bundle' ? (
+                      <>
+                        <div><p className="text-sm-muted">Category</p><p className="fw-600">{selectedOrder.product?.category}</p></div>
+                        <div><p className="text-sm-muted">Package Size</p><p className="fw-600">{selectedOrder.product?.packageSize}</p></div>
+                      </>
+                    ) : (
+                      <div><p className="text-sm-muted">Order Type</p><p className="fw-600 text-primary">Custom Prescription Order</p></div>
+                    )}
+                    {selectedOrder.product?.category !== 'Custom Bundle' && (
+                      <div><p className="text-sm-muted">Homeopathy Potency</p><p className="fw-600">{selectedOrder.product?.potency}</p></div>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-primary fw-600 modal-section-title">Medical Information</h3>
+                  <div className="modal-grid-1">
+                    <div>
+                      <p className="text-sm-muted">Product Description</p>
+                      <p className="fw-500 modal-line-height">{selectedOrder.product?.fullDesc}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {selectedOrder.product?.category !== 'Custom Bundle' && (
+                  <div>
+                    <h3 className="text-primary fw-600 modal-section-title mt-4">SEO Meta Tags</h3>
+                    <div className="modal-grid-1">
+                      <div>
+                        <p className="text-sm-muted">Meta Title</p>
+                        <p className="fw-500 modal-line-height">{selectedOrder.product?.metaTitle || `${selectedOrder.product?.name} - AyushBasket Medicines`}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm-muted">Meta Description</p>
+                        <p className="fw-500 modal-line-height">{selectedOrder.product?.metaDescription || selectedOrder.product?.shortDesc}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div>
+                <h3 className="text-primary fw-600 modal-section-title">Prescription Document</h3>
+                <div
+                  onClick={() => setPreviewImage(selectedOrder.imageUrl ? `http://localhost:5000${selectedOrder.imageUrl}` : 'https://images.unsplash.com/photo-1585435557343-3b092031a831?w=800&q=80')}
+                  className="highlight-box prescription-doc-link"
+                  onMouseOver={(e) => { e.currentTarget.style.transform = 'scale(1.02)'; e.currentTarget.style.boxShadow = 'var(--shadow-md)'; }}
+                  onMouseOut={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = 'none'; }}
+                >
+                  <div className="flex-center prescription-doc-wrapper">
+                    <ImageIcon size={20} color="var(--primary)" />
+                    <p className="fw-600">patient_prescription_upload.jpg</p>
+                  </div>
+                  <img src={selectedOrder.imageUrl ? `http://localhost:5000${selectedOrder.imageUrl}` : 'https://images.unsplash.com/photo-1585435557343-3b092031a831?w=800&q=80'} alt="Prescription" className="prescription-doc-img" />
+                  <p className="text-primary fw-600 flex-center prescription-doc-text">
+                    <Eye size={14} /> Click to View Full Size
+                  </p>
+                </div>
+
+                {/* Prescription Builder Form */}
+                <div className="mt-5">
+                  <h3 className="text-primary fw-600 modal-section-title">Build Order from Prescription</h3>
+                  <div className="prescription-grid">
+                    {/* Row 1 */}
+                    <div>
+                      <p className="text-sm-muted mb-1">Item ID</p>
+                      <input type="text" className="date-input w-100" value={formItemId} onChange={e => setFormItemId(e.target.value)} placeholder="MED-01" />
+                    </div>
+                    <div>
+                      <p className="text-sm-muted mb-1">Medicine Name</p>
+                      <input type="text" className="date-input w-100" value={formName} onChange={e => setFormName(e.target.value)} placeholder="E.g. Nux Vomica 30CH" />
+                    </div>
+                    <div>
+                      <p className="text-sm-muted mb-1">Category</p>
+                      <select className="date-input w-100" value={formCategory} onChange={e => setFormCategory(e.target.value)}>
+                        <option value="">Select Category</option>
+                        <option value="Homeopathic">Homeopathic</option>
+                        <option value="Ayurvedic">Ayurvedic</option>
+                        <option value="Unani">Unani</option>
+                        <option value="Personal Care">Personal Care</option>
+                        <option value="Baby Care">Baby Care</option>
+                        <option value="Supplments">Supplments</option>
+                        <option value="Immunity">Immunity</option>
+                        <option value="Heart Care">Heart Care</option>
+                        <option value="Diabetes Care">Diabetes Care</option>
+                        <option value="Digestive Care">Digestive Care</option>
+                        <option value="Mens">Mens</option>
+                        <option value="Womens">Womens</option>
+                        <option value="Lifetyle">Lifetyle</option>
+                        <option value="Joint pain">Joint pain</option>
+                      </select>
+                    </div>
+
+                    {/* Row 2 */}
+                    <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
+                      <div style={{ flex: 1 }}>
+                        <p className="text-sm-muted mb-1">Package Size</p>
+                        <select className="date-input w-100" value={formPackageSize} onChange={e => setFormPackageSize(e.target.value)}>
+                          <option value="">Select Size</option>
+                          <option value="30ml">30ml</option>
+                          <option value="100ml">100ml</option>
+                          <option value="25g Tube">25g Tube</option>
+                          <option value="Custom">Custom Size</option>
+                        </select>
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <p className="text-sm-muted mb-1">Potency (Opt)</p>
+                        <input type="text" className="date-input w-100" value={formPotency} onChange={e => setFormPotency(e.target.value)} placeholder="e.g. 30CH" />
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
+                      <div style={{ flex: 1 }}>
+                        <p className="text-sm-muted mb-1">Price (₹)</p>
+                        <input type="number" className="date-input w-100" value={formPrice} onChange={e => setFormPrice(e.target.value)} placeholder="0.00" />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <p className="text-sm-muted mb-1">Qty</p>
+                        <input type="number" className="date-input w-100" value={formQty} onChange={e => setFormQty(e.target.value)} placeholder="1" />
+                      </div>
+                    </div>
+                    <div>
+                      <button className="btn btn-primary w-100 h-38px" onClick={handleAddPrescriptionItem}>Add Medicine</button>
+                    </div>
+                  </div>
+
+                  {prescriptionItems.length > 0 && (
+                    <div className="card table-card p-0 mb-4 shadow-none border-default">
+                      <div className="table-responsive">
+                        <table className="data-table">
+                          <thead>
+                            <tr>
+                              <th>Item ID</th>
+                              <th>Medicine Name</th>
+                              <th>Price</th>
+                              <th>Qty</th>
+                              <th>Total</th>
+                              <th className="text-center">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {prescriptionItems.map((item, index) => (
+                              <tr key={index}>
+                                <td className="text-sm-muted">{item.id}</td>
+                                <td className="fw-600">{item.name}</td>
+                                <td>₹{item.price}</td>
+                                <td>{item.qty}</td>
+                                <td className="fw-600 text-primary">₹{item.price * item.qty}</td>
+                                <td className="text-center">
+                                  <button className="btn btn-outline btn-sm btn-danger-outline" onClick={() => handleRemoveItem(index)}>Remove</button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex-between total-order-card">
+                    <div>
+                      <p className="text-sm-muted mb-1">Total Order Value</p>
+                      <h2 className="fw-700 text-primary m-0 fs-15">₹{prescriptionItems.reduce((sum, item) => sum + (item.price * item.qty), 0)}</h2>
+                    </div>
+                    <button 
+                      className={`btn btn-primary py-3 px-6 text-md d-flex align-center gap-2 ${(prescriptionItems.length === 0 || isApproving) ? 'disabled' : ''}`}
+                      onClick={handleApprovePrescription}
+                      disabled={prescriptionItems.length === 0 || isApproving}
+                    >
+                      <CheckCircle size={18} />
+                      {isApproving ? 'Approving...' : 'Approve & Generate Order'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+          </div>
+        )}
+      </Modal>
+
+      {/* Full Screen Image Preview Modal */}
+      {previewImage && (
+        <div className="image-preview-overlay">
+          <div className="image-preview-actions">
+            <button
+              onClick={() => {
+                const link = document.createElement('a');
+                link.href = previewImage;
+                link.download = 'Patient_Prescription.jpg';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+              }}
+              className="btn-preview-download"
+            >
+              <Download size={18} /> Download Image
+            </button>
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="btn-preview-close"
+            >
+              <X size={20} /> Back
+            </button>
+          </div>
+          <img
+            src={previewImage}
+            alt="Prescription Document"
+            className="image-preview-img"
+          />
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default Orders;

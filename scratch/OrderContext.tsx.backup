@@ -1,0 +1,128 @@
+import { createContext, useState, useContext, useEffect, type ReactNode } from 'react';
+import { api } from '../api';
+
+export const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'Completed': return { bg: '#22c55e', text: '#ffffff' };
+    case 'Accepted': return { bg: '#eab308', text: '#ffffff' };
+    case 'Out for Delivery': return { bg: '#0ea5e9', text: '#ffffff' };
+    case 'Cancelled': return { bg: '#ef4444', text: '#ffffff' };
+    case 'Received': return { bg: '#8b5cf6', text: '#ffffff' };
+    case 'Pending': return { bg: '#f97316', text: '#ffffff' };
+    default: return { bg: '#94a3b8', text: '#ffffff' };
+  }
+};
+
+export interface Order {
+  id: string;
+  date: string;
+  status: string;
+  type: string;
+  customer: {
+    name: string;
+    phone: string;
+    address: string;
+  };
+  payment: {
+    method: string;
+    status: string;
+    transactionId: string;
+  };
+  product: {
+    name: string;
+    shortDesc: string;
+    fullDesc: string;
+    category: string;
+    price: string;
+    qty: number;
+    packageSize: string;
+    composition: string;
+    dosage: string;
+    potency: string;
+  };
+  items?: any[];
+}
+
+type OrderContextType = {
+  orders: Order[];
+  updateOrderStatus: (id: string, status: string) => Promise<void>;
+  fetchOrders: () => Promise<void>;
+};
+
+const OrderContext = createContext<OrderContextType | undefined>(undefined);
+
+export const OrderProvider = ({ children }: { children: ReactNode }) => {
+  const [orders, setOrders] = useState<Order[]>([]);
+
+  const fetchOrders = async () => {
+    try {
+      const response = await api.get<any>('/orders');
+      if (response.success && response.data) {
+        // Map backend orders to match frontend UI expectations
+        const mappedOrders = response.data.map((o: any) => ({
+          id: o.orderId || `#ORD-${o.id}`,
+          date: new Date(o.ordered_date || o.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+          status: o.status || 'Pending',
+          type: 'Medicine',
+          customer: {
+            name: o.customer_name || 'Customer',
+            phone: o.phone_number || 'N/A',
+            address: o.Address ? `${o.Address.addressLine1}, ${o.Address.city}` : 'N/A'
+          },
+          payment: {
+            method: o.paymentMethod || 'N/A',
+            status: 'Paid',
+            transactionId: o.transactionId || 'N/A'
+          },
+          product: {
+            name: o.items && o.items.length > 0 ? o.items[0].product_name : 'Products',
+            shortDesc: o.items && o.items.length > 0 ? o.items[0].small_description : '',
+            fullDesc: '',
+            category: '',
+            price: `₹${o.total_amount || 0}`,
+            qty: o.items && o.items.length > 0 ? o.items[0].quantity : 1,
+            packageSize: o.items && o.items.length > 0 ? o.items[0].package_size : '',
+            composition: '',
+            dosage: '',
+            potency: o.items && o.items.length > 0 ? o.items[0].potency : ''
+          },
+          items: o.items || []
+        }));
+        setOrders(mappedOrders);
+      }
+    } catch (e) {
+      console.error('Failed to fetch orders:', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchOrders();
+  }, []);
+
+  const updateOrderStatus = async (id: string, status: string) => {
+    try {
+      // Backend expects the numeric ID or orderId depending on route. 
+      // We'll use the id we have mapped.
+      const orderDbId = id.replace('#ORD-', '');
+      const res = await api.put<any>(`/orders/${orderDbId}/status`, { status });
+      if (res.success) {
+        setOrders(orders.map(o => o.id === id ? { ...o, status } : o));
+      }
+    } catch (e) {
+      console.error('Failed to update status', e);
+      throw e;
+    }
+  };
+
+  return (
+    <OrderContext.Provider value={{ orders, updateOrderStatus, fetchOrders }}>
+      {children}
+    </OrderContext.Provider>
+  );
+};
+
+export const useOrders = () => {
+  const context = useContext(OrderContext);
+  if (!context) throw new Error('useOrders must be used within OrderProvider');
+  return context;
+};

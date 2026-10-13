@@ -1,0 +1,65 @@
+/* eslint-disable react-refresh/only-export-components */
+import { createContext, useState, useContext } from 'react';
+import type { ReactNode } from 'react';
+
+export type Product = {
+  id: string | number;
+  name: string;
+  category: string;
+  category_name?: string;
+  stock: number;
+  price: string | number;
+  costPrice?: number;
+  expense?: number;
+  status: string;
+  image?: string;
+  images?: string[];
+  metaTag?: string;
+  productTag?: string;
+  description?: string;
+  fullDescription?: string;
+  packSize?: string;
+};
+
+type ProductContextType = {
+  products: Product[];
+  setProducts: (products: Product[]) => void;
+  addProduct: (product: Product) => void;
+  updateProduct: (id: string | number, updatedProduct: Partial<Product>) => void;
+  deleteProduct: (id: string | number) => void;
+};
+
+const ProductContext = createContext<ProductContextType | undefined>(undefined);
+
+export const ProductProvider = ({ children }: { children: ReactNode }) => {
+  // Start empty — Products.tsx fetches from the API
+  const [products, setProductsState] = useState<Product[]>([]);
+
+  const setProducts = (list: Product[]) => setProductsState(list);
+
+  const addProduct = (product: Product) => {
+    setProductsState(prev => [product, ...prev]);
+  };
+
+  const updateProduct = (id: string | number, updatedProduct: Partial<Product>) => {
+    setProductsState(prev => prev.map(p => String(p.id) === String(id) ? { ...p, ...updatedProduct } : p));
+  };
+
+  const deleteProduct = (id: string | number) => {
+    setProductsState(prev => prev.filter(p => String(p.id) !== String(id)));
+  };
+
+  return (
+    <ProductContext.Provider value={{ products, setProducts, addProduct, updateProduct, deleteProduct }}>
+      {children}
+    </ProductContext.Provider>
+  );
+};
+
+export const useProducts = () => {
+  const context = useContext(ProductContext);
+  if (!context) {
+    throw new Error('useProducts must be used within a ProductProvider');
+  }
+  return context;
+};

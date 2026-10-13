@@ -1,0 +1,523 @@
+import { useState, useRef, useEffect } from 'react';
+import type { ChangeEvent } from 'react';
+import { Upload, Save, X, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { useProducts } from '../context/ProductContext';
+import { api } from '../api';
+import '../styles/pages/AddProduct.css';
+
+const AddProduct = () => {
+  const navigate = useNavigate();
+  const { addProduct } = useProducts();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
+  const [imageFiles, setImageFiles] = useState<File[]>([]);
+  const [apiCategories, setApiCategories] = useState<{id: number, name: string}[]>([]);
+  const [alert, setAlert] = useState<{ show: boolean, type: 'success' | 'error', message: string }>({
+    show: false,
+    type: 'success',
+    message: ''
+  });
+
+  useEffect(() => {
+    api.get('/categories')
+      .then((res: any) => {
+        if (res.success) {
+          setApiCategories(res.data);
+        }
+      })
+      .catch((err: any) => console.error("Error fetching categories:", err));
+  }, []);
+
+
+  const [formData, setFormData] = useState({
+    name: '',
+    actualPrice: '',
+    discountPercentage: '',
+    category: '',
+    metaTag: '',
+    productTag: '',
+    shortDescription: '',
+    fullDescription: '',
+    imageUrl: '',
+    metaTitle: '',
+    metaDescription: '',
+    packSize: '',
+    potency: '',
+    composition: '',
+    dosage: '',
+    costPrice: '',
+    expense: ''
+  });
+
+  const calculateFinalPrice = () => {
+    const actual = parseFloat(formData.actualPrice) || 0;
+    const discount = parseFloat(formData.discountPercentage) || 0;
+    const finalPrice = actual - (actual * (discount / 100));
+    return finalPrice > 0 ? finalPrice : 0;
+  };
+
+  const finalPrice = calculateFinalPrice();
+
+  const handleImageChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      const fileArray = Array.from(files);
+      setImageFiles(prev => [...prev, ...fileArray]);
+      const promises = fileArray.map(file => {
+        return new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(file);
+        });
+      });
+      Promise.all(promises).then(results => {
+        setImagePreviews(prev => [...prev, ...results]);
+      });
+    }
+  };
+
+  const triggerFileInput = () => {
+    fileInputRef.current?.click();
+  };
+
+  const showAlert = (type: 'success' | 'error', message: string) => {
+    setAlert({ show: true, type, message });
+    setTimeout(() => {
+      setAlert(prev => ({ ...prev, show: false }));
+    }, 4000);
+  };
+
+  const handleSave = async () => {
+    // Validation
+    if (!formData.name.trim()) {
+      showAlert('error', 'Product name is required.');
+      return;
+    }
+    if (!formData.category || formData.category === 'Select Category') {
+      showAlert('error', 'Please select a product category.');
+      return;
+    }
+    if (!formData.actualPrice.trim() || isNaN(Number(formData.actualPrice)) || Number(formData.actualPrice) <= 0) {
+      showAlert('error', 'Please enter a valid actual price greater than 0.');
+      return;
+    }
+    const hasImageUrls = formData.imageUrl.trim().length > 0;
+    if (imagePreviews.length === 0 && !hasImageUrls) {
+      showAlert('error', 'Please upload at least one product image or provide image URLs to proceed.');
+      return;
+    }
+    const purchasePrice = Number(formData.costPrice);
+    if (isNaN(purchasePrice) || purchasePrice < 0) {
+      showAlert('error', 'Please enter a valid purchase price.');
+      return;
+    }
+    if (finalPrice <= purchasePrice) {
+      showAlert('error', 'Selling Price (Total Price after discount) must be higher than the Purchase Price.');
+      return;
+    }
+
+    // API Upload via FormData
+    const formDataToSubmit = new FormData();
+    formDataToSubmit.append('name', formData.name.trim());
+    formDataToSubmit.append('category_id', formData.category); // Map to category_id
+    formDataToSubmit.append('price', formData.actualPrice); // Base price
+    formDataToSubmit.append('offerPrice', finalPrice.toString()); // Discounted price
+    formDataToSubmit.append('stock', '100'); // Dummy stock as UI didn't have state for it
+    formDataToSubmit.append('costPrice', formData.costPrice.toString());
+    formDataToSubmit.append('expense', formData.expense.toString());
+    formDataToSubmit.append('description', formData.shortDescription.trim());
+    formDataToSubmit.append('fullDescription', formData.fullDescription.trim());
+    formDataToSubmit.append('meta_tag', formData.metaTag);
+    formDataToSubmit.append('product_tag', formData.productTag);
+    formDataToSubmit.append('discountPercentage', formData.discountPercentage);
+    
+    // Add the new fields for database insertion
+    formDataToSubmit.append('package_size', formData.packSize);
+    formDataToSubmit.append('potency', formData.potency);
+    formDataToSubmit.append('composition', formData.composition);
+    formDataToSubmit.append('dosage', formData.dosage);
+    formDataToSubmit.append('meta_title', formData.metaTitle);
+    formDataToSubmit.append('meta_description', formData.metaDescription);
+    
+    if (formData.imageUrl.trim()) {
+      formDataToSubmit.append('imageUrls', formData.imageUrl.trim());
+    }
+
+    imageFiles.forEach(file => {
+      formDataToSubmit.append('image', file);
+    });
+
+    try {
+      const response = await api.post<any>('/products', formDataToSubmit);
+      console.log('product saved successfully'); // As requested!
+      
+      // Find category name, prioritizing the backend response
+      const categoryName = response?.data?.category_name || apiCategories.find(c => c.id.toString() === formData.category)?.name || formData.category;
+
+      // Success - Fallback local state for demo purposes
+      const newProduct = {
+        id: `PRD-0${Math.floor(Math.random() * 100) + 10}`,
+        name: formData.name.trim(),
+        category: categoryName,
+        stock: 100, // Default stock for demo
+        price: `₹${finalPrice.toFixed(2)}`,
+        status: 'In Stock',
+        image: formData.imageUrl.trim().split(',')[0] || (imagePreviews.length > 0 ? imagePreviews[0] : undefined),
+        images: [...imagePreviews, ...formData.imageUrl.split(',').map(u => u.trim()).filter(Boolean)],
+        description: formData.shortDescription.trim() || undefined,
+        fullDescription: formData.fullDescription.trim() || undefined,
+        metaTag: formData.metaTag || undefined,
+        productTag: formData.productTag || undefined,
+        costPrice: Number(formData.costPrice) || 0,
+        expense: Number(formData.expense) || 0
+      };
+
+      addProduct(newProduct);
+      showAlert('success', 'Product has been successfully saved!');
+
+      // Redirect after a short delay
+      setTimeout(() => {
+        navigate('/products');
+      }, 1500);
+    } catch (error: any) {
+      console.error('Failed to save product', error);
+      showAlert('error', error.message || 'Failed to connect to the backend while saving.');
+    }
+  };
+
+  return (
+    <div className="add-product-page">
+      {/* Unique Custom Alert */}
+      <div className={`custom-alert ${alert.type} ${alert.show ? 'show' : ''}`}>
+        <div className="alert-icon">
+          {alert.type === 'success' ? <CheckCircle2 color="white" /> : <AlertCircle color="white" />}
+        </div>
+        <div className="alert-content">
+          <h4>{alert.type === 'success' ? 'Success' : 'Validation Error'}</h4>
+          <p>{alert.message}</p>
+        </div>
+        <button className="alert-close" onClick={() => setAlert(prev => ({ ...prev, show: false }))}>
+          <X size={16} color="white" />
+        </button>
+      </div>
+
+      <div className="page-header">
+        <div>
+          <h2 className="add-product-page-title">Add New Product</h2>
+          <p className="text-muted page-subtitle">Create a new Ayush product listing</p>
+        </div>
+      </div>
+
+      <div className="add-product-grid">
+        <div className="form-main">
+          <div className="card">
+            <h3 className="card-title">Basic Information</h3>
+            <div className="form-group">
+              <label>Product Name <span className="text-danger">*</span></label>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="e.g. Arnica Montana 30CH"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              />
+            </div>
+            <div className="form-group">
+              <label>Short Description</label>
+              <textarea
+                className="form-control"
+                rows={2}
+                placeholder="A brief summary of the product..."
+                value={formData.shortDescription}
+                onChange={(e) => setFormData({ ...formData, shortDescription: e.target.value })}
+              ></textarea>
+            </div>
+            <div className="form-group">
+              <label>Full Description</label>
+              <textarea
+                className="form-control"
+                rows={4}
+                placeholder="Detailed product description including usage, composition, etc..."
+                value={formData.fullDescription}
+                onChange={(e) => setFormData({ ...formData, fullDescription: e.target.value })}
+              ></textarea>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group">
+                <label>Potency</label>
+                <select 
+                  className="form-control"
+                  value={formData.potency}
+                  onChange={(e) => setFormData({ ...formData, potency: e.target.value })}
+                >
+                  <option value="">Select Potency</option>
+                  <option value="6C">6C</option>
+                  <option value="30C">30C</option>
+                  <option value="200C">200C</option>
+                  <option value="1M">1M</option>
+                  <option value="Mother Tincture (Q)">Mother Tincture (Q)</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Composition</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="e.g. Arnica 30C, Belladonna 30C"
+                  value={formData.composition}
+                  onChange={(e) => setFormData({ ...formData, composition: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Dosage</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="e.g. 2 drops in water twice a day"
+                  value={formData.dosage}
+                  onChange={(e) => setFormData({ ...formData, dosage: e.target.value })}
+                />
+              </div>
+              <div className="form-group">
+                <label>Category <span className="text-danger">*</span></label>
+                <select
+                  className="form-control"
+                  value={formData.category}
+                  onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                >
+                  <option value="">Select Category</option>
+                  <option value="Homeopathic">Homeopathic</option>
+                  <option value="Unani">Unani</option>
+                  <option value="Personal Care">Personal Care</option>
+                  <option value="Baby Care">Baby Care</option>
+                  <option value="Immunity">Immunity</option>
+                  <option value="Heart Care">Heart Care</option>
+                  <option value="Diabetes Care">Diabetes Care</option>
+                  <option value="Digestive Care">Digestive Care</option>
+                  <option value="Men's">Men's</option>
+                  <option value="Women's">Women's</option>
+                  <option value="Lifestyle">Lifestyle</option>
+                  <option value="Joint Pain">Joint Pain</option>
+                  {apiCategories.map(cat => (
+                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="card mt-4">
+            <h3 className="card-title">Pricing & Inventory</h3>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Purchase Price (₹) <span className="text-danger">*</span></label>
+                <input
+                  type="number"
+                  className="form-control"
+                  placeholder="e.g. 150"
+                  min="0"
+                  value={formData.costPrice}
+                  onChange={(e) => setFormData({ ...formData, costPrice: e.target.value })}
+                />
+              </div>
+              <div className="form-group">
+                <label>Selling Price (₹) <span className="text-danger">*</span></label>
+                <input
+                  type="number"
+                  className="form-control"
+                  placeholder="0.00"
+                  min="0"
+                  step="0.01"
+                  value={formData.actualPrice}
+                  onChange={(e) => setFormData({ ...formData, actualPrice: e.target.value })}
+                />
+              </div>
+              <div className="form-group">
+                <label>Discount (%)</label>
+                <input
+                  type="number"
+                  className="form-control"
+                  placeholder="0"
+                  min="0"
+                  max="100"
+                  value={formData.discountPercentage}
+                  onChange={(e) => setFormData({ ...formData, discountPercentage: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="form-row-3 mt-3">
+              <div className="form-group">
+                <label>Total Price (₹)</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={`₹${finalPrice.toFixed(2)}`}
+                  readOnly
+                  disabled
+                />
+              </div>
+              <div className="form-group">
+                <label>Available Quantity</label>
+                <input type="number" className="form-control" placeholder="0" min="0" />
+              </div>
+              <div className="form-group">
+                <label>Pack Size</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="e.g. 30ml, 100g, 50 Tablets"
+                  value={formData.packSize}
+                  onChange={(e) => setFormData({ ...formData, packSize: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="card mt-4">
+            <h3 className="card-title">Search Engine Optimization (SEO)</h3>
+            <p className="text-muted text-sm mb-3">Make this product SEO friendly to help it rank higher on Google.</p>
+            <div className="form-group">
+              <label>Meta Title</label>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="e.g. Aconitum Napellus - Buy Ayush Medicine Online"
+                value={formData.metaTitle}
+                onChange={(e) => setFormData({ ...formData, metaTitle: e.target.value })}
+              />
+              <span className="text-muted small">Leave blank to automatically use the product name.</span>
+            </div>
+            <div className="form-group mt-3">
+              <label>Meta Description</label>
+              <textarea
+                className="form-control"
+                rows={3}
+                placeholder="Brief description for search engine results..."
+                value={formData.metaDescription}
+                onChange={(e) => setFormData({ ...formData, metaDescription: e.target.value })}
+              ></textarea>
+            </div>
+          </div>
+        </div>
+
+        <div className="form-sidebar">
+          <div className="card">
+            <h3 className="card-title">Product Image <span className="text-danger">*</span></h3>
+            <div
+              className={`image-upload-box clickable`}
+              onClick={triggerFileInput}
+            >
+              <Upload size={32} color="var(--text-muted)" />
+              <p>Drag and drop images here</p>
+              <span className="text-muted small">or click to browse (Multiple allowed)</span>
+              <button
+                className="btn btn-outline mt-2"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  triggerFileInput();
+                }}
+              >
+                Browse Files
+              </button>
+
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                ref={fileInputRef}
+                className="hidden-input"
+                onChange={handleImageChange}
+              />
+            </div>
+            
+            {imagePreviews.length > 0 && (
+              <div style={{ display: 'flex', gap: '10px', marginTop: '1rem', flexWrap: 'wrap' }}>
+                {imagePreviews.map((src, index) => (
+                  <div key={index} style={{ position: 'relative', width: '60px', height: '60px', border: '1px solid #ccc', borderRadius: '4px', overflow: 'hidden' }}>
+                    <img src={src} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    <button
+                      onClick={() => setImagePreviews(prev => prev.filter((_, i) => i !== index))}
+                      style={{ position: 'absolute', top: 0, right: 0, background: 'rgba(255,0,0,0.7)', color: 'white', border: 'none', borderRadius: '0 0 0 4px', cursor: 'pointer', padding: '2px' }}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="form-group mt-3">
+              <label className="text-center w-100 d-block text-muted small mb-2">OR</label>
+              <label>Image URLs <span className="text-muted small">(Comma separated)</span></label>
+              <textarea
+                className="form-control"
+                rows={2}
+                placeholder="https://example.com/img1.jpg, https://example.com/img2.jpg"
+                value={formData.imageUrl}
+                onChange={(e) => setFormData({ ...formData, imageUrl: e.target.value })}
+              ></textarea>
+              
+              {formData.imageUrl.trim() && (
+                <div style={{ display: 'flex', gap: '10px', marginTop: '1rem', flexWrap: 'wrap' }}>
+                  {formData.imageUrl.split(',').map(u => u.trim()).filter(Boolean).map((src, index) => (
+                    <div key={`url-${index}`} style={{ position: 'relative', width: '60px', height: '60px', border: '1px solid #ccc', borderRadius: '4px', overflow: 'hidden' }}>
+                      <img src={src} alt="URL Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="card mt-4">
+            <h3 className="card-title">Organize</h3>
+            <div className="form-group">
+              <label>Status</label>
+              <select className="form-control">
+                <option>Active</option>
+                <option>Draft</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Meta Tag (SEO)</label>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="e.g. pain relief, headache"
+                value={formData.metaTag}
+                onChange={(e) => setFormData({ ...formData, metaTag: e.target.value })}
+              />
+            </div>
+            <div className="form-group">
+              <label>Product Tag</label>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="e.g. Best Seller, New Arrival"
+                value={formData.productTag}
+                onChange={(e) => setFormData({ ...formData, productTag: e.target.value })}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+
+
+      <div className="form-actions-bottom">
+        <button className="btn btn-outline btn-lg-action" onClick={() => navigate('/products')}>
+          <X size={22} /> Cancel
+        </button>
+        <button className="btn btn-primary btn-lg-action btn-save-action" onClick={handleSave}>
+          <Save size={22} /> Save Product
+        </button>
+      </div>
+    </div>
+  );
+};
+
+export default AddProduct;

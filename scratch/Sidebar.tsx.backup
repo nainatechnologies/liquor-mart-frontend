@@ -1,0 +1,98 @@
+import { useState } from 'react';
+import { NavLink, useNavigate } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
+import {
+  LayoutDashboard,
+  Pill,
+  User,
+  LineChart,
+  Settings,
+  LogOut,
+  ShoppingCart,
+  MessageCircle,
+  ChevronDown,
+  ChevronRight,
+  Shield,
+  Tag
+} from 'lucide-react';
+import '../../styles/components/Sidebar.css';
+
+const Sidebar = () => {
+  const { logout } = useAuth();
+  const navigate = useNavigate();
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
+
+  const navItems = [
+    { name: 'Dashboard', icon: <LayoutDashboard size={20} />, path: '/' },
+    { name: 'Orders', icon: <ShoppingCart size={20} />, path: '/orders', colorClass: 'icon-orders' },
+    { name: 'Products', icon: <Pill size={20} />, path: '/products', colorClass: 'icon-products' },
+    { name: 'Revenue', icon: <LineChart size={20} />, path: '/revenue' },
+    { name: 'Coupons', icon: <Tag size={20} />, path: '/coupons', colorClass: 'icon-coupons' },
+    { name: 'Support', icon: <MessageCircle size={20} />, path: '/support', colorClass: 'icon-support' },
+  ];
+
+  return (
+    <aside className="sidebar">
+      <div className="sidebar-header">
+        <div className="logo-icon">
+          <img src="/logo.png" alt="AyushBasket Logo" className="logo-image" />
+        </div>
+      </div>
+
+      <div className="admin-profile">
+        <div className="admin-info">
+          <h4>Admin</h4>
+          <p>AyushBasket</p>
+        </div>
+      </div>
+
+      <nav className="sidebar-nav">
+        <ul>
+          {navItems.map((item) => (
+            <li key={item.name}>
+              <NavLink
+                to={item.path}
+                className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}
+              >
+                <div className={`nav-icon-wrapper ${item.colorClass || ''}`}>
+                  {item.icon}
+                </div>
+                <span>{item.name}</span>
+              </NavLink>
+            </li>
+          ))}
+        </ul>
+      </nav>
+
+      <div className="sidebar-footer">
+        <div className="footer-links">
+          <button className="nav-link justify-between w-100" onClick={() => setIsSettingsOpen(!isSettingsOpen)}>
+            <div className="d-flex align-center gap-3">
+              <Settings size={20} /><span>Settings</span>
+            </div>
+            {isSettingsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          </button>
+          
+          {isSettingsOpen && (
+            <div className="submenu-container">
+              <NavLink to="/profile" className={({ isActive }) => isActive ? 'nav-link active submenu-link p-2' : 'nav-link submenu-link p-2'}>
+                <User size={16} /><span>Profile</span>
+              </NavLink>
+              <NavLink to="/change-password" className={({ isActive }) => isActive ? 'nav-link active submenu-link p-2' : 'nav-link submenu-link p-2'}>
+                <Shield size={16} /><span>Password</span>
+              </NavLink>
+            </div>
+          )}
+          <button className="nav-link text-danger" onClick={handleLogout}><LogOut size={20} /><span>Logout</span></button>
+        </div>
+      </div>
+    </aside>
+  );
+};
+
+export default Sidebar;

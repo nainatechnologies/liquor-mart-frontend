@@ -1,0 +1,50 @@
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import Layout from './components/Layout/Layout';
+import Dashboard from './pages/Dashboard';
+import Products from './pages/Products';
+import AddProduct from './pages/AddProduct';
+import Revenue from './pages/Revenue';
+import Profile from './pages/Profile';
+import ChangePassword from './pages/ChangePassword';
+import Orders from './pages/Orders';
+import Support from './pages/Support';
+import Coupons from './pages/Coupons';
+import Login from './pages/Login';
+import { ProductProvider } from './context/ProductContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
+
+const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
+  const { isAuthenticated } = useAuth();
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+  return <>{children}</>;
+};
+
+function App() {
+  return (
+    <AuthProvider>
+      <ProductProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+              <Route index element={<Dashboard />} />
+              <Route path="products" element={<Products />} />
+              <Route path="orders" element={<Orders />} />
+              <Route path="add-product" element={<AddProduct />} />
+              <Route path="coupons" element={<Coupons />} />
+              <Route path="revenue" element={<Revenue />} />
+              <Route path="support" element={<Support />} />
+              <Route path="profile" element={<Profile />} />
+              <Route path="change-password" element={<ChangePassword />} />
+              <Route path="*" element={<Dashboard />} />
+            </Route>
+          </Routes>
+        </BrowserRouter>
+      </ProductProvider>
+    </AuthProvider>
+  );
+}
+
+export default App;
